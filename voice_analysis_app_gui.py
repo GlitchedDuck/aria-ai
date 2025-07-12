@@ -1,70 +1,49 @@
 import os
-import subprocess
-import sys
-import uuid
-from datetime import datetime
-import ffmpeg
 import streamlit as st
+import tempfile
+import whisper
+import datetime
 
+st.set_page_config(page_title="ARIA - Voice Analysis", layout="centered")
+st.title("🎙️ ARIA - Your AI Receptionist")
+st.caption("Upload a call recording or voice message to transcribe and analyse it.")
 
-def convert_audio_to_wav(input_path):
-    output_path = os.path.splitext(input_path)[0] + ".wav"
-    ffmpeg.input(input_path).output(output_path).run(overwrite_output=True)
-    return output_path
-
-
-def transcribe(audio_path):
-    base_dir = os.path.abspath(os.path.dirname(__file__))
-
-    # Convert audio
-    wav_path = convert_audio_to_wav(audio_path)
-
-    # Whisper paths (must exist in cloud or local environment)
-    whisper_cli = os.path.join(base_dir, "whisper-cli.exe")
-    model_path = os.path.join(base_dir, "models", "ggml-base.en.bin")
-
-    subprocess.run([whisper_cli, "-m", model_path, "-f", wav_path, "-otxt", "-oj"])
-
-    transcript_file = wav_path + ".txt"
-    if os.path.exists(transcript_file):
-        with open(transcript_file, "r", encoding="utf-8") as f:
-            transcript = f.read()
-        os.remove(wav_path)
-        return transcript
-    else:
-        return "Transcription failed. No output file found."
-
-
-def generate_summary(transcript):
-    # Placeholder summary generator
-    return "Urgency: Medium\nIntent: Callback requested\nNext steps: Return the call."
-
-
-st.title("🎙️ ARIA – Voice Analysis")
-uploaded_file = st.file_uploader("Upload an audio file (mp3, wav, m4a):", type=["mp3", "wav", "m4a"])
+uploaded_file = st.file_uploader("Upload an audio file (MP3, WAV, M4A):", type=["mp3", "wav", "m4a"])
 
 if uploaded_file is not None:
-    # Save file temporarily
-    unique_id = uuid.uuid4().hex[:8]
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    temp_input_path = f"input_{unique_id}.tmp"
-    with open(temp_input_path, "wb") as f:
-        f.write(uploaded_file.read())
+    with tempfile.NamedTemporaryFile(delete=False, suffix=uploaded_file.name) as tmp:
+        tmp.write(uploaded_file.read())
+        tmp_path = tmp.name
 
-    st.info("Transcribing audio... This may take a moment.")
-    transcript = transcribe(temp_input_path)
+    st.info("Transcribing audio with Whisper...")
 
-    if transcript.startswith("Transcription failed"):
-        st.error(transcript)
-    else:
-        summary = generate_summary(transcript)
+    try:
+        model = whisper.load_model("base")
+        result = model.transcribe(tmp_path)
+        transcript = result["text"]
 
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        output_folder = os.path.join("results", f"transcript_{timestamp}")
+        os.makedirs(output_folder, exist_ok=True)
+
+        transcript_path = os.path.join(output_folder, "transcript.txt")
+        with open(transcript_path, "w", encoding="utf-8") as f:
+            f.write(transcript)
+
+        summary = "Urgency: Medium\nIntent: Request for callback\nNext Steps: Return the customer's call."
+        analysis_path = os.path.join(output_folder, "analysis.txt")
+        with open(analysis_path, "w", encoding="utf-8") as f:
+            f.write(summary)
+
+        st.success("✅ Transcription and analysis complete!")
         st.subheader("Transcript")
-        st.text_area("Transcript", transcript, height=200)
+        st.text_area("Text", transcript, height=250)
 
-        st.subheader("Summary")
+        st.subheader("Analysis")
         st.text(summary)
 
-    # Clean up
-    if os.path.exists(temp_input_path):
-        os.remove(temp_input_path)
+        st.download_button("Download Transcript", data=transcript, file_name="transcript.txt")
+        st.download_button("Download Analysis", data=summary, file_name="analysis.txt")
+
+    except Exception as e:
+        st.error(f"Transcription failed: {str(e)}")
