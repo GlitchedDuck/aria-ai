@@ -3,28 +3,23 @@ import subprocess
 import sys
 import uuid
 from datetime import datetime
-from pydub import AudioSegment
+import ffmpeg
 import streamlit as st
 
-# Setup ffmpeg path
-ffmpeg_path = os.path.join(os.path.dirname(__file__), "ffmpeg.exe")
-ffprobe_path = os.path.join(os.path.dirname(__file__), "ffprobe.exe")
-AudioSegment.converter = ffmpeg_path
-AudioSegment.ffprobe = ffprobe_path
 
-# Transcribe audio using Whisper CLI
+def convert_audio_to_wav(input_path):
+    output_path = os.path.splitext(input_path)[0] + ".wav"
+    ffmpeg.input(input_path).output(output_path).run(overwrite_output=True)
+    return output_path
+
+
 def transcribe(audio_path):
     base_dir = os.path.abspath(os.path.dirname(__file__))
 
-    ffmpeg_path = os.path.join(base_dir, "ffmpeg.exe")
-    ffprobe_path = os.path.join(base_dir, "ffprobe.exe")
-    AudioSegment.converter = ffmpeg_path
-    AudioSegment.ffprobe = ffprobe_path
+    # Convert audio
+    wav_path = convert_audio_to_wav(audio_path)
 
-    wav_path = audio_path.rsplit(".", 1)[0] + ".wav"
-    audio = AudioSegment.from_file(audio_path)
-    audio.export(wav_path, format="wav")
-
+    # Whisper paths (must exist in cloud or local environment)
     whisper_cli = os.path.join(base_dir, "whisper-cli.exe")
     model_path = os.path.join(base_dir, "models", "ggml-base.en.bin")
 
@@ -40,43 +35,36 @@ def transcribe(audio_path):
         return "Transcription failed. No output file found."
 
 
-# Streamlit UI
-st.set_page_config(page_title="Voice Analysis App", layout="centered")
-st.title("📞 Voice Analysis App")
+def generate_summary(transcript):
+    # Placeholder summary generator
+    return "Urgency: Medium\nIntent: Callback requested\nNext steps: Return the call."
 
-uploaded_file = st.file_uploader("Upload an MP3 or WAV file", type=["mp3", "wav"])
+
+st.title("🎙️ ARIA – Voice Analysis")
+uploaded_file = st.file_uploader("Upload an audio file (mp3, wav, m4a):", type=["mp3", "wav", "m4a"])
 
 if uploaded_file is not None:
-    unique_id = datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + "_" + str(uuid.uuid4())[:8]
-    result_folder = os.path.join("Results", unique_id)
-    os.makedirs(result_folder, exist_ok=True)
+    # Save file temporarily
+    unique_id = uuid.uuid4().hex[:8]
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    temp_input_path = f"input_{unique_id}.tmp"
+    with open(temp_input_path, "wb") as f:
+        f.write(uploaded_file.read())
 
-    input_path = os.path.join(result_folder, uploaded_file.name)
-    with open(input_path, "wb") as f:
-        f.write(uploaded_file.getbuffer())
+    st.info("Transcribing audio... This may take a moment.")
+    transcript = transcribe(temp_input_path)
 
-    with st.spinner("Transcribing audio..."):
-        transcript = transcribe(input_path)
+    if transcript.startswith("Transcription failed"):
+        st.error(transcript)
+    else:
+        summary = generate_summary(transcript)
 
-    st.success("✅ Transcription complete!")
+        st.subheader("Transcript")
+        st.text_area("Transcript", transcript, height=200)
 
-    st.subheader("📄 Transcript")
-    st.text_area("Transcript", transcript, height=300)
+        st.subheader("Summary")
+        st.text(summary)
 
-    # Placeholder summary
-    summary = "Urgency: Medium\nIntent: Request for callback\nNext Steps: Return the customer's call."
-
-    st.subheader("🧠 Summary")
-    st.text_area("Analysis", summary, height=150)
-
-    # Save files
-    transcript_path = os.path.join(result_folder, "transcript.txt")
-    analysis_path = os.path.join(result_folder, "analysis.txt")
-
-    with open(transcript_path, "w", encoding="utf-8") as f:
-        f.write(transcript)
-
-    with open(analysis_path, "w", encoding="utf-8") as f:
-        f.write(summary)
-
-    st.success(f"Results saved in: {result_folder}")
+    # Clean up
+    if os.path.exists(temp_input_path):
+        os.remove(temp_input_path)
